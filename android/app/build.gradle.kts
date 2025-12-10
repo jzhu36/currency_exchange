@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.currencyapp.currency_exchange"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -22,9 +22,9 @@ android {
     defaultConfig {
         applicationId = "com.currencyapp.currency_exchange"
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0.0"
     }
 
     buildTypes {
