@@ -63,6 +63,25 @@ class _ConverterScreenState extends State<ConverterScreen> {
       _currencies = currencies;
       _setupControllersAndFocusNodes();
     });
+    
+    // After loading currencies, update all fields based on existing values
+    _updateAllFieldsFromExisting();
+  }
+  
+  /// Update all fields based on the first non-empty field.
+  void _updateAllFieldsFromExisting() {
+    // Find first currency with a value
+    for (final currency in _currencies) {
+      final controller = _controllers[currency];
+      if (controller != null && controller.text.isNotEmpty) {
+        final amount = double.tryParse(controller.text);
+        if (amount != null && amount > 0) {
+          _lastEditedCurrency = currency;
+          _updateOtherFields(currency, amount);
+          return;
+        }
+      }
+    }
   }
 
   /// Set up controllers and focus nodes for all currencies.
@@ -341,87 +360,90 @@ class _ConverterScreenState extends State<ConverterScreen> {
 
                     // Currency list with reordering
                     Expanded(
-                      child: ReorderableListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        itemCount: _currencies.length,
-                        onReorder: _onReorder,
-                        itemBuilder: (context, index) {
-                          final currency = _currencies[index];
-                          final controller = _controllers[currency];
-                          final focusNode = _focusNodes[currency];
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: ReorderableListView.builder(
+                              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                              itemCount: _currencies.length,
+                              onReorder: _onReorder,
+                              itemBuilder: (context, index) {
+                                final currency = _currencies[index];
+                                final controller = _controllers[currency];
+                                final focusNode = _focusNodes[currency];
 
-                          if (controller == null || focusNode == null) {
-                            return const SizedBox.shrink(key: ValueKey('empty'));
-                          }
+                                if (controller == null || focusNode == null) {
+                                  return const SizedBox.shrink(key: ValueKey('empty'));
+                                }
 
-                          return LongPressDraggable<String>(
-                            key: ValueKey(currency),
-                            data: currency,
-                            feedback: Opacity(
-                              opacity: 0.8,
-                              child: Material(
-                                elevation: 8,
-                                borderRadius: BorderRadius.circular(12),
-                                child: Container(
-                                  width: MediaQuery.of(context).size.width - 32,
-                                  child: CurrencyInputField(
-                                    currencyCode: currency,
-                                    controller: TextEditingController(),
-                                    focusNode: FocusNode(),
+                                return LongPressDraggable<String>(
+                                  key: ValueKey(currency),
+                                  data: currency,
+                                  feedback: Opacity(
+                                    opacity: 0.8,
+                                    child: Material(
+                                      elevation: 8,
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Container(
+                                        width: MediaQuery.of(context).size.width - 32,
+                                        child: CurrencyInputField(
+                                          currencyCode: currency,
+                                          controller: TextEditingController(),
+                                          focusNode: FocusNode(),
+                                        ),
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
+                                  childWhenDragging: Opacity(
+                                    opacity: 0.3,
+                                    child: CurrencyInputField(
+                                      currencyCode: currency,
+                                      controller: controller,
+                                      focusNode: focusNode,
+                                    ),
+                                  ),
+                                  onDragStarted: () {
+                                    setState(() {
+                                      _isDragging = true;
+                                      _draggingCurrency = currency;
+                                    });
+                                  },
+                                  onDragEnd: (details) {
+                                    setState(() {
+                                      _isDragging = false;
+                                      _draggingCurrency = null;
+                                    });
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(bottom: 12.0),
+                                    child: CurrencyInputField(
+                                      currencyCode: currency,
+                                      controller: controller,
+                                      focusNode: focusNode,
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
-                            childWhenDragging: Opacity(
-                              opacity: 0.3,
-                              child: CurrencyInputField(
-                                currencyCode: currency,
-                                controller: controller,
-                                focusNode: focusNode,
-                              ),
-                            ),
-                            onDragStarted: () {
-                              setState(() {
-                                _isDragging = true;
-                                _draggingCurrency = currency;
-                              });
-                            },
-                            onDragEnd: (details) {
-                              setState(() {
-                                _isDragging = false;
-                                _draggingCurrency = null;
-                              });
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.only(bottom: 12.0),
-                              child: CurrencyInputField(
-                                currencyCode: currency,
-                                controller: controller,
-                                focusNode: focusNode,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-
-                    // Add Currency button
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: _navigateToAddCurrency,
-                          icon: const Icon(Icons.add),
-                          label: const Text('Add Currency'),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
                           ),
-                        ),
+                          
+                          // Add Currency button - simple + icon right below currencies
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                            child: Center(
+                              child: FloatingActionButton(
+                                onPressed: _navigateToAddCurrency,
+                                mini: true,
+                                child: const Icon(Icons.add),
+                                tooltip: 'Add Currency',
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
 
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 12),
 
                     // Footer with rate info
                     Padding(
@@ -438,16 +460,15 @@ class _ConverterScreenState extends State<ConverterScreen> {
 
                     const SizedBox(height: 8),
 
-                    // Display current rates
+                    // Display current rates - show all selected currencies
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16.0),
                       child: Builder(
                         builder: (context) {
                           final rates = CurrencyConverter.getRates();
                           final usdRate = rates['USD'] ?? 1.0;
-                          final displayCurrencies = _currencies.take(3).toList();
                           
-                          final rateTexts = displayCurrencies.where((c) => c != 'USD').map((c) {
+                          final rateTexts = _currencies.where((c) => c != 'USD').map((c) {
                             final rate = rates[c];
                             if (rate != null) {
                               final decimals = CurrencyData.getDecimalPlaces(c);
@@ -463,12 +484,15 @@ class _ConverterScreenState extends State<ConverterScreen> {
                                   fontSize: 11,
                                 ),
                             textAlign: TextAlign.center,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
                           );
                         },
                       ),
                     ),
 
-                    const SizedBox(height: 20),
+                    // Extra padding for navigation buttons
+                    SizedBox(height: MediaQuery.of(context).padding.bottom + 20),
                   ],
                 ),
 
