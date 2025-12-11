@@ -1,4 +1,5 @@
 import 'currency_data.dart';
+import 'package:intl/intl.dart';
 
 /// Currency converter model with dynamic exchange rates.
 /// Uses USD as the base currency for all conversions.
@@ -60,24 +61,22 @@ class CurrencyConverter {
 
   /// Formats an amount according to the currency's decimal place rules.
   ///
-  /// JPY, KRW, etc. will have 0 decimal places (e.g., "149")
-  /// Most currencies will have 2 decimal places (e.g., "100.50")
+  /// JPY, KRW, etc. will have 0 decimal places (e.g., "1,234")
+  /// Most currencies will have 2 decimal places (e.g., "1,234.56")
   /// Some (BHD, KWD, etc.) will have 3 decimal places
   ///
+  /// Numbers are formatted with thousand separators for better readability.
   /// Trailing zeros after decimal point are removed for cleaner display.
   static String formatAmount(double amount, String currency) {
     final decimalPlaces = getDecimalPlaces(currency);
 
-    if (decimalPlaces == 0) {
-      return amount.toStringAsFixed(0);
-    }
-
-    // Format with proper decimal places
-    String formatted = amount.toStringAsFixed(decimalPlaces);
+    // Create a NumberFormat with thousand separators
+    final formatter = NumberFormat('#,##0${decimalPlaces > 0 ? '.' + '0' * decimalPlaces : ''}', 'en_US');
+    String formatted = formatter.format(amount);
 
     // Remove trailing zeros after decimal point for cleaner display
-    // e.g., "100.50" stays as "100.50", but "100.00" becomes "100"
-    if (formatted.contains('.')) {
+    // e.g., "1,234.50" stays as "1,234.50", but "1,234.00" becomes "1,234"
+    if (decimalPlaces > 0 && formatted.contains('.')) {
       formatted = formatted.replaceAll(RegExp(r'0+$'), '');
       formatted = formatted.replaceAll(RegExp(r'\.$'), '');
     }

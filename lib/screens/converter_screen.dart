@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/currency_converter.dart';
 import '../widgets/currency_input_field.dart';
 import '../services/exchange_rate_service.dart';
@@ -25,6 +27,10 @@ class _ConverterScreenState extends State<ConverterScreen> {
   bool _isLoading = true;
   bool _isDragging = false;
   String? _draggingCurrency;
+  bool _isRefreshing = false;
+  Timer? _retryTimer;
+  bool _hasLoadError = false;
+  int? _dragOverIndex;
 
   @override
   void initState() {
@@ -50,7 +56,9 @@ class _ConverterScreenState extends State<ConverterScreen> {
     for (final currency in _currencies) {
       final controller = _controllers[currency];
       if (controller != null && controller.text.isNotEmpty) {
-        final amount = double.tryParse(controller.text);
+        // Remove thousand separators before parsing
+        final cleanText = controller.text.replaceAll(',', '');
+        final amount = double.tryParse(cleanText);
         if (amount != null && amount > 0) {
           _lastEditedCurrency = currency;
           _updateOtherFields(currency, amount);
@@ -104,16 +112,97 @@ class _ConverterScreenState extends State<ConverterScreen> {
         CurrencyConverter.updateRates(rates);
         _lastUpdateTime = DateTime.fromMillisecondsSinceEpoch(timestamp);
         _isLoading = false;
+        _hasLoadError = false;
       });
+
+      // Cancel retry timer if rates loaded successfully
+      _retryTimer?.cancel();
+      _retryTimer = null;
     } catch (e) {
       setState(() {
         _isLoading = false;
+        _hasLoadError = true;
       });
+
+      // Show toast notification
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to load exchange rates. Retrying...'),
+            duration: Duration(seconds: 3),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+
+      // Start auto-retry timer (retry every 30 seconds)
+      _retryTimer?.cancel();
+      _retryTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
+        try {
+          final data = await ExchangeRateService.getRates();
+          final rates = data['rates'] as Map<String, dynamic>;
+          final timestamp = data['timestamp'] as int;
+
+          if (mounted) {
+            setState(() {
+              CurrencyConverter.updateRates(rates);
+              _lastUpdateTime = DateTime.fromMillisecondsSinceEpoch(timestamp);
+              _hasLoadError = false;
+            });
+
+            // Update all fields with new rates
+            _updateAllFieldsFromExisting();
+
+            // Cancel timer after successful retry
+            timer.cancel();
+            _retryTimer = null;
+          }
+        } catch (e) {
+          // Continue retrying
+        }
+      });
+    }
+  }
+
+  Future<void> _refreshRates() async {
+    setState(() {
+      _isRefreshing = true;
+    });
+
+    try {
+      final data = await ExchangeRateService.getRates();
+      final rates = data['rates'] as Map<String, dynamic>;
+      final timestamp = data['timestamp'] as int;
+
+      setState(() {
+        CurrencyConverter.updateRates(rates);
+        _lastUpdateTime = DateTime.fromMillisecondsSinceEpoch(timestamp);
+        _isRefreshing = false;
+      });
+
+      // Update all fields with new rates
+      _updateAllFieldsFromExisting();
+    } catch (e) {
+      setState(() {
+        _isRefreshing = false;
+      });
+
+      // Show error toast
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to refresh rates. Will retry automatically.'),
+            duration: Duration(seconds: 3),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
     }
   }
 
   @override
   void dispose() {
+    _retryTimer?.cancel();
     for (var controller in _controllers.values) {
       controller.dispose();
     }
@@ -132,7 +221,7 @@ class _ConverterScreenState extends State<ConverterScreen> {
       try {
         final controller = _controllers[currency];
         if (controller == null) return;
-        
+
         final text = controller.text;
 
         if (text.isEmpty) {
@@ -140,7 +229,9 @@ class _ConverterScreenState extends State<ConverterScreen> {
           return;
         }
 
-        final amount = double.tryParse(text);
+        // Remove thousand separators before parsing
+        final cleanText = text.replaceAll(',', '');
+        final amount = double.tryParse(cleanText);
         if (amount == null) return;
 
         _updateOtherFields(currency, amount);
@@ -193,13 +284,13 @@ class _ConverterScreenState extends State<ConverterScreen> {
     }
   }
 
-  void _onReorder(int oldIndex, int newIndex) async {
+  void _onReorder(String draggedCurrency, int newIndex) async {
+    final oldIndex = _currencies.indexOf(draggedCurrency);
+    if (oldIndex == -1 || oldIndex == newIndex) return;
+
     setState(() {
-      if (oldIndex < newIndex) {
-        newIndex -= 1;
-      }
-      final currency = _currencies.removeAt(oldIndex);
-      _currencies.insert(newIndex, currency);
+      _currencies.removeAt(oldIndex);
+      _currencies.insert(newIndex, draggedCurrency);
     });
     await CurrencyPreferencesService.saveSelectedCurrencies(_currencies);
   }
@@ -219,17 +310,9 @@ class _ConverterScreenState extends State<ConverterScreen> {
   }
 
   Future<void> _navigateToAddCurrency() async {
-    if (_currencies.length >= 20) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Maximum 20 currencies allowed'),
-          duration: Duration(seconds: 2),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-    
+    // The add card is automatically hidden when at max capacity
+    // so no need to check here
+
     final result = await Navigator.of(context).push<String>(
       MaterialPageRoute(
         builder: (context) => const AddCurrencyScreen(),
@@ -288,63 +371,126 @@ class _ConverterScreenState extends State<ConverterScreen> {
                     const SizedBox(height: 20),
                     
                     Expanded(
-                      child: ReorderableListView.builder(
+                      child: ListView.builder(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                        buildDefaultDragHandles: false,
-                        itemCount: _currencies.length + 1,
-                        onReorder: _onReorder,
-                        footer: Column(
-                          key: const ValueKey('footer'),
-                          children: [
-                            const SizedBox(height: 12),
-                            Center(
-                              child: FloatingActionButton(
-                                onPressed: _navigateToAddCurrency,
-                                mini: true,
-                                heroTag: null,
-                                child: const Icon(Icons.add),
-                              ),
-                            ),
-                            const SizedBox(height: 24),
-                            Text(
-                              'Last updated: ${_formatUpdateTime(_lastUpdateTime)}',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: Colors.grey[600],
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 8),
-                            Builder(
-                              builder: (context) {
-                                final rates = CurrencyConverter.getRates();
-                                final usdRate = rates['USD'] ?? 1.0;
-                                final rateTexts = _currencies.where((c) => c != 'USD').map((c) {
-                                  final rate = rates[c];
-                                  if (rate != null) {
-                                    final decimals = CurrencyData.getDecimalPlaces(c);
-                                    return '${(rate / usdRate).toStringAsFixed(decimals)} $c';
-                                  }
-                                  return '';
-                                }).where((s) => s.isNotEmpty).join(' | ');
-                                return Text(
-                                  rateTexts.isEmpty ? '1 USD = Base currency' : '1 USD = $rateTexts',
-                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                        color: Colors.grey[500],
-                                        fontSize: 11,
-                                      ),
-                                  textAlign: TextAlign.center,
-                                  maxLines: 5,
-                                  overflow: TextOverflow.ellipsis,
-                                );
-                              },
-                            ),
-                            SizedBox(height: MediaQuery.of(context).padding.bottom + 20),
-                          ],
-                        ),
+                        itemCount: _currencies.length >= 20 ? _currencies.length + 1 : _currencies.length + 2,
                         itemBuilder: (context, index) {
                           if (index == _currencies.length) {
-                            return const SizedBox.shrink(key: ValueKey('spacer'));
+                            // Add Currency card (if under 20 limit)
+                            if (_currencies.length < 20) {
+                              return Padding(
+                                key: const ValueKey('add_currency_card'),
+                                padding: const EdgeInsets.only(bottom: 12.0, top: 12.0),
+                                child: InkWell(
+                                  onTap: _navigateToAddCurrency,
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey[50],
+                                      border: Border.all(
+                                        color: Colors.grey[400]!,
+                                        width: 2,
+                                        style: BorderStyle.solid,
+                                      ),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12.0,
+                                      vertical: 18.0,
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.add_circle_outline,
+                                          size: 32,
+                                          color: Colors.blue,
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Text(
+                                          'Add Currency',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w500,
+                                            color: Colors.blue,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }
+                          }
+
+                          if (index > _currencies.length) {
+                            // Bottom section
+                            return Column(
+                              key: const ValueKey('footer'),
+                              children: [
+                                const SizedBox(height: 12),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      'Last updated: ${_formatUpdateTime(_lastUpdateTime)}',
+                                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                            color: Colors.grey[600],
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    IconButton(
+                                      icon: _isRefreshing
+                                          ? SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Colors.grey[600],
+                                              ),
+                                            )
+                                          : Icon(
+                                              Icons.refresh,
+                                              size: 20,
+                                              color: Colors.grey[600],
+                                            ),
+                                      onPressed: _isRefreshing ? null : _refreshRates,
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                      tooltip: 'Refresh exchange rates',
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Builder(
+                                  builder: (context) {
+                                    final rates = CurrencyConverter.getRates();
+                                    final usdRate = rates['USD'] ?? 1.0;
+                                    final rateTexts = _currencies.where((c) => c != 'USD').map((c) {
+                                      final rate = rates[c];
+                                      if (rate != null) {
+                                        final decimals = CurrencyData.getDecimalPlaces(c);
+                                        return '${(rate / usdRate).toStringAsFixed(decimals)} $c';
+                                      }
+                                      return '';
+                                    }).where((s) => s.isNotEmpty).join(' | ');
+                                    return Text(
+                                      rateTexts.isEmpty ? '1 USD = Base currency' : '1 USD = $rateTexts',
+                                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                            color: Colors.grey[500],
+                                            fontSize: 11,
+                                          ),
+                                      textAlign: TextAlign.center,
+                                      maxLines: 5,
+                                      overflow: TextOverflow.ellipsis,
+                                    );
+                                  },
+                                ),
+                                SizedBox(height: MediaQuery.of(context).padding.bottom + 20),
+                              ],
+                            );
                           }
 
                           final currency = _currencies[index];
@@ -355,55 +501,102 @@ class _ConverterScreenState extends State<ConverterScreen> {
                             return const SizedBox.shrink(key: ValueKey('empty'));
                           }
 
-                          return ReorderableDragStartListener(
-                            key: ValueKey(currency),
-                            index: index,
-                            child: LongPressDraggable<String>(
-                              data: currency,
-                              feedback: Opacity(
-                                opacity: 0.8,
-                                child: Material(
-                                  elevation: 8,
-                                  borderRadius: BorderRadius.circular(12),
-                                  child: SizedBox(
-                                    width: MediaQuery.of(context).size.width - 32,
-                                    child: CurrencyInputField(
-                                      currencyCode: currency,
-                                      controller: TextEditingController(),
-                                      focusNode: FocusNode(),
+                          return DragTarget<String>(
+                            onWillAccept: (data) {
+                              return data != null && data != currency && _isDragging;
+                            },
+                            onAccept: (draggedCurrency) {
+                              _onReorder(draggedCurrency, index);
+                              setState(() {
+                                _dragOverIndex = null;
+                              });
+                            },
+                            onMove: (details) {
+                              if (_dragOverIndex != index) {
+                                setState(() {
+                                  _dragOverIndex = index;
+                                });
+                              }
+                            },
+                            onLeave: (data) {
+                              if (_dragOverIndex == index) {
+                                setState(() {
+                                  _dragOverIndex = null;
+                                });
+                              }
+                            },
+                            builder: (context, candidateData, rejectedData) {
+                              final isHovering = candidateData.isNotEmpty;
+
+                              return AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                margin: EdgeInsets.only(
+                                  top: isHovering && index == 0 ? 8.0 : 0.0,
+                                  bottom: isHovering ? 20.0 : 12.0,
+                                ),
+                                child: Column(
+                                  children: [
+                                    if (isHovering && index > 0)
+                                      Container(
+                                        height: 4,
+                                        color: Colors.blue,
+                                        margin: const EdgeInsets.only(bottom: 8.0),
+                                      ),
+                                    LongPressDraggable<String>(
+                                      data: currency,
+                                      feedback: Material(
+                                        elevation: 8,
+                                        borderRadius: BorderRadius.circular(12),
+                                        child: Opacity(
+                                          opacity: 0.8,
+                                          child: SizedBox(
+                                            width: MediaQuery.of(context).size.width - 32,
+                                            child: CurrencyInputField(
+                                              currencyCode: currency,
+                                              controller: TextEditingController(),
+                                              focusNode: FocusNode(),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      childWhenDragging: Opacity(
+                                        opacity: 0.3,
+                                        child: CurrencyInputField(
+                                          currencyCode: currency,
+                                          controller: controller,
+                                          focusNode: focusNode,
+                                        ),
+                                      ),
+                                      onDragStarted: () {
+                                        HapticFeedback.mediumImpact();
+                                        setState(() {
+                                          _isDragging = true;
+                                          _draggingCurrency = currency;
+                                        });
+                                      },
+                                      onDragEnd: (details) {
+                                        setState(() {
+                                          _isDragging = false;
+                                          _draggingCurrency = null;
+                                          _dragOverIndex = null;
+                                        });
+                                      },
+                                      child: CurrencyInputField(
+                                        currencyCode: currency,
+                                        controller: controller,
+                                        focusNode: focusNode,
+                                      ),
                                     ),
-                                  ),
+                                    if (isHovering && index == _currencies.length - 1)
+                                      Container(
+                                        height: 4,
+                                        color: Colors.blue,
+                                        margin: const EdgeInsets.only(top: 8.0),
+                                      ),
+                                  ],
                                 ),
-                              ),
-                              childWhenDragging: Opacity(
-                                opacity: 0.3,
-                                child: CurrencyInputField(
-                                  currencyCode: currency,
-                                  controller: controller,
-                                  focusNode: focusNode,
-                                ),
-                              ),
-                              onDragStarted: () {
-                                setState(() {
-                                  _isDragging = true;
-                                  _draggingCurrency = currency;
-                                });
-                              },
-                              onDragEnd: (details) {
-                                setState(() {
-                                  _isDragging = false;
-                                  _draggingCurrency = null;
-                                });
-                              },
-                              child: Padding(
-                                padding: const EdgeInsets.only(bottom: 12.0),
-                                child: CurrencyInputField(
-                                  currencyCode: currency,
-                                  controller: controller,
-                                  focusNode: focusNode,
-                                ),
-                              ),
-                            ),
+                              );
+                            },
                           );
                         },
                       ),
@@ -413,52 +606,40 @@ class _ConverterScreenState extends State<ConverterScreen> {
 
                 if (_isDragging)
                   Positioned(
-                    bottom: 0,
                     left: 0,
                     right: 0,
-                    child: DragTarget<String>(
-                      onWillAccept: (data) => data != null && data == _draggingCurrency,
-                      onAccept: (currency) {
-                        _onCurrencyDeleted(currency);
-                      },
-                      builder: (context, candidateData, rejectedData) {
-                        final isHovering = candidateData.isNotEmpty;
-                        return AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          height: 100,
-                          decoration: BoxDecoration(
-                            color: isHovering ? Colors.red[700] : Colors.red[400],
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.3),
-                                blurRadius: 10,
-                                offset: const Offset(0, -3),
-                              ),
-                            ],
-                          ),
-                          child: Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.delete_forever,
-                                  size: isHovering ? 50 : 40,
-                                  color: Colors.white,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  isHovering ? 'Release to delete' : 'Drop here to delete',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                    bottom: 20 + MediaQuery.of(context).padding.bottom,
+                    child: Center(
+                      child: DragTarget<String>(
+                        onWillAccept: (data) => data != null && data == _draggingCurrency,
+                        onAccept: (currency) {
+                          _onCurrencyDeleted(currency);
+                        },
+                        builder: (context, candidateData, rejectedData) {
+                          final isHovering = candidateData.isNotEmpty;
+                          return AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              color: isHovering ? Colors.red[700] : Colors.red[400],
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.3),
+                                  blurRadius: 10,
+                                  spreadRadius: 2,
                                 ),
                               ],
                             ),
-                          ),
-                        );
-                      },
+                            child: Icon(
+                              Icons.delete_forever,
+                              size: isHovering ? 36 : 30,
+                              color: Colors.white,
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ),
               ],

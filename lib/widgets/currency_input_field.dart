@@ -1,7 +1,91 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import '../models/currency_converter.dart';
 import '../models/currency_data.dart';
+
+/// Custom text input formatter that adds thousand separators as user types.
+class ThousandsSeparatorInputFormatter extends TextInputFormatter {
+  final int decimalPlaces;
+
+  ThousandsSeparatorInputFormatter({required this.decimalPlaces});
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    if (newValue.text.isEmpty) {
+      return newValue;
+    }
+
+    // Remove all commas to get the raw number
+    String newText = newValue.text.replaceAll(',', '');
+
+    // Validate input: only digits and optional decimal point
+    if (decimalPlaces > 0) {
+      if (!RegExp(r'^\d*\.?\d*$').hasMatch(newText)) {
+        return oldValue;
+      }
+    } else {
+      if (!RegExp(r'^\d*$').hasMatch(newText)) {
+        return oldValue;
+      }
+    }
+
+    // Handle decimal places limit
+    if (newText.contains('.')) {
+      final parts = newText.split('.');
+      if (parts.length > 2) {
+        return oldValue; // Multiple decimal points not allowed
+      }
+      if (parts[1].length > decimalPlaces) {
+        return oldValue; // Too many decimal places
+      }
+    }
+
+    // Format with thousand separators
+    String formattedText = _formatWithThousands(newText, decimalPlaces);
+
+    // Calculate new cursor position
+    int selectionIndex = newValue.selection.end;
+    int originalCommas = ','.allMatches(oldValue.text.substring(0, oldValue.selection.end)).length;
+    int newCommas = ','.allMatches(formattedText.substring(0, selectionIndex)).length;
+
+    // Adjust cursor position based on added/removed commas
+    selectionIndex += (newCommas - originalCommas);
+    selectionIndex = selectionIndex.clamp(0, formattedText.length);
+
+    return TextEditingValue(
+      text: formattedText,
+      selection: TextSelection.collapsed(offset: selectionIndex),
+    );
+  }
+
+  String _formatWithThousands(String value, int decimalPlaces) {
+    if (value.isEmpty) return '';
+
+    // Split into integer and decimal parts
+    final parts = value.split('.');
+    String integerPart = parts[0];
+    String decimalPart = parts.length > 1 ? parts[1] : '';
+
+    // Add thousand separators to integer part
+    if (integerPart.isNotEmpty) {
+      final number = int.tryParse(integerPart);
+      if (number != null) {
+        final formatter = NumberFormat('#,###', 'en_US');
+        integerPart = formatter.format(number);
+      }
+    }
+
+    // Reconstruct the number
+    if (decimalPart.isNotEmpty || value.endsWith('.')) {
+      return '$integerPart.${decimalPart}';
+    }
+    return integerPart;
+  }
+}
 
 /// A reusable widget for currency input fields.
 ///
@@ -16,12 +100,14 @@ class CurrencyInputField extends StatelessWidget {
   final String currencyCode;
   final TextEditingController controller;
   final FocusNode focusNode;
+  final Widget? leadingWidget;
 
   const CurrencyInputField({
     super.key,
     required this.currencyCode,
     required this.controller,
     required this.focusNode,
+    this.leadingWidget,
   });
 
   @override
@@ -39,6 +125,12 @@ class CurrencyInputField extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
         child: Row(
           children: [
+            // Optional leading widget (like drag handle)
+            if (leadingWidget != null) ...[
+              leadingWidget!,
+              const SizedBox(width: 8),
+            ],
+            
             // Flag emoji
             Text(
               flagEmoji,
@@ -74,12 +166,9 @@ class CurrencyInputField extends StatelessWidget {
                   fontWeight: FontWeight.w500,
                 ),
                 inputFormatters: [
-                  // For JPY: only allow digits (no decimal point)
-                  // For others: allow digits and one decimal point
-                  if (allowDecimals)
-                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
-                  else
-                    FilteringTextInputFormatter.digitsOnly,
+                  ThousandsSeparatorInputFormatter(
+                    decimalPlaces: CurrencyConverter.getDecimalPlaces(currencyCode),
+                  ),
                 ],
               ),
             ),
