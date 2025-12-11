@@ -170,7 +170,8 @@ class _ConverterScreenState extends State<ConverterScreen> {
     });
 
     try {
-      final data = await ExchangeRateService.getRates();
+      // Force refresh bypasses cache and always fetches from API
+      final data = await ExchangeRateService.forceRefresh();
       final rates = data['rates'] as Map<String, dynamic>;
       final timestamp = data['timestamp'] as int;
 
@@ -182,6 +183,17 @@ class _ConverterScreenState extends State<ConverterScreen> {
 
       // Update all fields with new rates
       _updateAllFieldsFromExisting();
+
+      // Show success feedback
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Exchange rates updated successfully'),
+            duration: Duration(seconds: 2),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
     } catch (e) {
       setState(() {
         _isRefreshing = false;
