@@ -156,9 +156,43 @@ class ExchangeRateService {
   }
 
   /// Force refresh rates from API.
+  /// Throws an exception if the API call fails.
   static Future<Map<String, dynamic>> forceRefresh() async {
     final prefs = await SharedPreferences.getInstance();
-    return await _fetchAndCacheRates(prefs);
+
+    try {
+      final response = await http.get(Uri.parse(_apiUrl)).timeout(
+        const Duration(seconds: 10),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        final rates = data['rates'] as Map<String, dynamic>;
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+
+        // Merge with default rates to ensure all currencies are present
+        final mergedRates = Map<String, dynamic>.from(_defaultRates);
+        mergedRates.addAll(rates);
+
+        // Cache the rates
+        await prefs.setString(_ratesKey, json.encode({
+          'rates': mergedRates,
+          'timestamp': timestamp,
+        }));
+        await prefs.setInt(_timestampKey, timestamp);
+
+        return {
+          'rates': mergedRates,
+          'timestamp': timestamp,
+        };
+      } else {
+        throw Exception('Failed to fetch rates: HTTP ${response.statusCode}');
+      }
+    } catch (e) {
+      // Re-throw the exception so the caller knows it failed
+      print('Failed to fetch rates: $e');
+      throw Exception('Failed to fetch exchange rates: $e');
+    }
   }
 
   /// Get rate for a specific currency.
