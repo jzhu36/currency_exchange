@@ -4,12 +4,14 @@ import '../services/currency_preferences_service.dart';
 import '../services/exchange_rate_service.dart';
 
 /// Screen for adding new currencies to the converter.
-/// 
+///
 /// Features:
 /// - Search bar for filtering currencies
 /// - List of all world currencies
 /// - Shows flag, country name, and currency code
-/// - Marks already selected currencies
+/// - Marks already selected currencies with green checkmark
+/// - Click unselected currency to add it
+/// - Click selected currency (checkmark) to remove it
 /// - Fetches rate when currency is added
 class AddCurrencyScreen extends StatefulWidget {
   const AddCurrencyScreen({super.key});
@@ -58,7 +60,7 @@ class _AddCurrencyScreenState extends State<AddCurrencyScreen> {
   Future<void> _addCurrency(String currencyCode) async {
     // Show loading indicator
     if (!mounted) return;
-    
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -70,27 +72,61 @@ class _AddCurrencyScreenState extends State<AddCurrencyScreen> {
     try {
       // Add to preferences
       await CurrencyPreferencesService.addCurrency(currencyCode);
-      
+
       // Fetch rate for this currency if not already cached
       await ExchangeRateService.getRateForCurrency(currencyCode);
-      
+
       if (!mounted) return;
-      
+
       // Close loading dialog
       Navigator.of(context).pop();
-      
+
       // Return to converter screen with result
       Navigator.of(context).pop(currencyCode);
     } catch (e) {
       if (!mounted) return;
-      
+
       // Close loading dialog
       Navigator.of(context).pop();
-      
+
       // Show error
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to add currency: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  /// Remove currency from selection.
+  Future<void> _removeCurrency(String currencyCode) async {
+    try {
+      // Remove from preferences
+      final success = await CurrencyPreferencesService.removeCurrency(currencyCode);
+
+      if (success) {
+        setState(() {
+          _selectedCurrencies.remove(currencyCode);
+        });
+
+        if (!mounted) return;
+
+        // Show confirmation
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Removed $currencyCode'),
+            duration: const Duration(seconds: 2),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to remove currency: $e'),
           backgroundColor: Colors.red,
         ),
       );
@@ -177,10 +213,13 @@ class _AddCurrencyScreenState extends State<AddCurrencyScreen> {
                                     color: Colors.green[600],
                                   )
                                 : null,
-                            enabled: !isSelected,
-                            onTap: isSelected
-                                ? null
-                                : () => _addCurrency(currency.code),
+                            onTap: () {
+                              if (isSelected) {
+                                _removeCurrency(currency.code);
+                              } else {
+                                _addCurrency(currency.code);
+                              }
+                            },
                           );
                         },
                       ),
