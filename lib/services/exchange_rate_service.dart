@@ -55,15 +55,16 @@ class ExchangeRateService {
   static Future<void> initializeDefaultRates() async {
     final prefs = await SharedPreferences.getInstance();
     final hasRates = prefs.containsKey(_ratesKey);
-    
+
     if (!hasRates) {
-      // First install - save default rates
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      // First install - save default rates with old timestamp to trigger immediate fetch
+      // Set timestamp to 25 hours ago to ensure fresh rates are fetched on first launch
+      final oldTimestamp = DateTime.now().subtract(const Duration(hours: 25)).millisecondsSinceEpoch;
       await prefs.setString(_ratesKey, json.encode({
         'rates': _defaultRates,
-        'timestamp': timestamp,
+        'timestamp': oldTimestamp,
       }));
-      await prefs.setInt(_timestampKey, timestamp);
+      await prefs.setInt(_timestampKey, oldTimestamp);
     }
   }
 
