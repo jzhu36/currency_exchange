@@ -47,18 +47,36 @@ class ThousandsSeparatorInputFormatter extends TextInputFormatter {
     // Format with thousand separators
     String formattedText = _formatWithThousands(newText, decimalPlaces);
 
-    // Calculate new cursor position
-    int selectionIndex = newValue.selection.end;
-    int originalCommas = ','.allMatches(oldValue.text.substring(0, oldValue.selection.end)).length;
-    int newCommas = ','.allMatches(formattedText.substring(0, selectionIndex)).length;
-
-    // Adjust cursor position based on added/removed commas
-    selectionIndex += (newCommas - originalCommas);
-    selectionIndex = selectionIndex.clamp(0, formattedText.length);
+    // Calculate cursor position in the raw (unformatted) text
+    int rawCursorPosition = newValue.selection.end;
+    
+    // Count how many commas were in the input text before the cursor
+    int commasBeforeCursor = 0;
+    for (int i = 0; i < newValue.selection.end && i < newValue.text.length; i++) {
+      if (newValue.text[i] == ',') {
+        commasBeforeCursor++;
+      }
+    }
+    
+    // Adjust raw cursor position by removing commas
+    rawCursorPosition -= commasBeforeCursor;
+    rawCursorPosition = rawCursorPosition.clamp(0, newText.length);
+    
+    // Find the corresponding position in formatted text
+    int formattedCursorPosition = 0;
+    int rawPosition = 0;
+    while (rawPosition < rawCursorPosition && formattedCursorPosition < formattedText.length) {
+      if (formattedText[formattedCursorPosition] != ',') {
+        rawPosition++;
+      }
+      formattedCursorPosition++;
+    }
+    
+    formattedCursorPosition = formattedCursorPosition.clamp(0, formattedText.length);
 
     return TextEditingValue(
       text: formattedText,
-      selection: TextSelection.collapsed(offset: selectionIndex),
+      selection: TextSelection.collapsed(offset: formattedCursorPosition),
     );
   }
 
