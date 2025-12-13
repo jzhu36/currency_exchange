@@ -31,6 +31,7 @@ class _ConverterScreenState extends State<ConverterScreen> {
   Timer? _retryTimer;
   bool _hasLoadError = false;
   int? _dragOverIndex;
+  int? _draggingFromIndex;
 
   @override
   void initState() {
@@ -518,9 +519,11 @@ class _ConverterScreenState extends State<ConverterScreen> {
                               return data != null && data != currency && _isDragging;
                             },
                             onAccept: (draggedCurrency) {
+                              HapticFeedback.lightImpact();
                               _onReorder(draggedCurrency, index);
                               setState(() {
                                 _dragOverIndex = null;
+                                _draggingFromIndex = null;
                               });
                             },
                             onMove: (details) {
@@ -539,9 +542,26 @@ class _ConverterScreenState extends State<ConverterScreen> {
                             },
                             builder: (context, candidateData, rejectedData) {
                               final isHovering = candidateData.isNotEmpty;
+                              final isDraggingThisItem = _draggingCurrency == currency;
+                              
+                              // Calculate if this item should shift
+                              final shouldShift = _dragOverIndex != null &&
+                                                  _draggingFromIndex != null &&
+                                                  !isDraggingThisItem;
+                              final shiftDirection = shouldShift && _dragOverIndex! <= index && index < _draggingFromIndex!
+                                  ? 1.0  // Shift down
+                                  : shouldShift && _dragOverIndex! >= index && index > _draggingFromIndex!
+                                      ? -1.0  // Shift up
+                                      : 0.0;  // No shift
 
                               return AnimatedContainer(
-                                duration: const Duration(milliseconds: 200),
+                                duration: const Duration(milliseconds: 300),
+                                curve: Curves.easeOutCubic,
+                                transform: Matrix4.translationValues(
+                                  0,
+                                  shiftDirection * 80.0,  // Height of a currency card
+                                  0,
+                                ),
                                 margin: EdgeInsets.only(
                                   top: isHovering && index == 0 ? 8.0 : 0.0,
                                   bottom: isHovering ? 20.0 : 12.0,
@@ -557,22 +577,26 @@ class _ConverterScreenState extends State<ConverterScreen> {
                                     LongPressDraggable<String>(
                                       data: currency,
                                       feedback: Material(
-                                        elevation: 8,
+                                        elevation: 12,
                                         borderRadius: BorderRadius.circular(12),
-                                        child: Opacity(
-                                          opacity: 0.8,
-                                          child: SizedBox(
-                                            width: MediaQuery.of(context).size.width - 32,
-                                            child: CurrencyInputField(
-                                              currencyCode: currency,
-                                              controller: TextEditingController(),
-                                              focusNode: FocusNode(),
+                                        child: Transform.scale(
+                                          scale: 1.05,
+                                          child: Opacity(
+                                            opacity: 0.9,
+                                            child: SizedBox(
+                                              width: MediaQuery.of(context).size.width - 32,
+                                              child: CurrencyInputField(
+                                                currencyCode: currency,
+                                                controller: TextEditingController(text: controller.text),
+                                                focusNode: FocusNode(),
+                                              ),
                                             ),
                                           ),
                                         ),
                                       ),
-                                      childWhenDragging: Opacity(
-                                        opacity: 0.3,
+                                      childWhenDragging: AnimatedOpacity(
+                                        opacity: 0.0,
+                                        duration: const Duration(milliseconds: 200),
                                         child: CurrencyInputField(
                                           currencyCode: currency,
                                           controller: controller,
@@ -584,19 +608,27 @@ class _ConverterScreenState extends State<ConverterScreen> {
                                         setState(() {
                                           _isDragging = true;
                                           _draggingCurrency = currency;
+                                          _draggingFromIndex = index;
                                         });
                                       },
                                       onDragEnd: (details) {
+                                        HapticFeedback.lightImpact();
                                         setState(() {
                                           _isDragging = false;
                                           _draggingCurrency = null;
                                           _dragOverIndex = null;
+                                          _draggingFromIndex = null;
                                         });
                                       },
-                                      child: CurrencyInputField(
-                                        currencyCode: currency,
-                                        controller: controller,
-                                        focusNode: focusNode,
+                                      child: AnimatedScale(
+                                        scale: isDraggingThisItem ? 0.98 : 1.0,
+                                        duration: const Duration(milliseconds: 200),
+                                        curve: Curves.easeOut,
+                                        child: CurrencyInputField(
+                                          currencyCode: currency,
+                                          controller: controller,
+                                          focusNode: focusNode,
+                                        ),
                                       ),
                                     ),
                                     if (isHovering && index == _currencies.length - 1)
