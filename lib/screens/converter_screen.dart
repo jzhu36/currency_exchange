@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/currency_converter.dart';
 import '../widgets/currency_input_field.dart';
 import '../services/exchange_rate_service.dart';
@@ -40,20 +41,52 @@ class _ConverterScreenState extends State<ConverterScreen> {
   }
 
   Future<void> _initializeApp() async {
+    // Load currencies first - this is fast
     await _loadCurrencies();
-    await _loadExchangeRates();
+    
+    // Mark as not loading so UI can be shown
+    setState(() {
+      _isLoading = false;
+    });
+    
+    // Load exchange rates in background - non-blocking
+    _loadExchangeRates();
   }
 
   Future<void> _loadCurrencies() async {
     final currencies = await CurrencyPreferencesService.getSelectedCurrencies();
+    
+    // Load the last edited currency from preferences
+    final prefs = await SharedPreferences.getInstance();
+    final savedLastCurrency = prefs.getString('last_edited_currency');
+    
     setState(() {
       _currencies = currencies;
       _setupControllersAndFocusNodes();
+      
+      // Restore last edited currency if it's still in the list
+      if (savedLastCurrency != null && currencies.contains(savedLastCurrency)) {
+        _lastEditedCurrency = savedLastCurrency;
+      }
     });
     _updateAllFieldsFromExisting();
   }
   
   void _updateAllFieldsFromExisting() {
+    // First try to use the saved last edited currency
+    if (_lastEditedCurrency.isNotEmpty && _controllers.containsKey(_lastEditedCurrency)) {
+      final controller = _controllers[_lastEditedCurrency];
+      if (controller != null && controller.text.isNotEmpty) {
+        final cleanText = controller.text.replaceAll(',', '');
+        final amount = double.tryParse(cleanText);
+        if (amount != null && amount > 0) {
+          _updateOtherFields(_lastEditedCurrency, amount);
+          return;
+        }
+      }
+    }
+    
+    // Fallback: find any currency with a value
     for (final currency in _currencies) {
       final controller = _controllers[currency];
       if (controller != null && controller.text.isNotEmpty) {
@@ -94,8 +127,13 @@ class _ConverterScreenState extends State<ConverterScreen> {
       }
 
       controller.addListener(() => _onAmountChanged(currency));
-      focusNode.addListener(() {
-        if (focusNode.hasFocus) _lastEditedCurrency = currency;
+      focusNode.addListener(() async {
+        if (focusNode.hasFocus) {
+          _lastEditedCurrency = currency;
+          // Save to preferences
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('last_edited_currency', currency);
+        }
       });
 
       _controllers[currency] = controller;
@@ -109,24 +147,27 @@ class _ConverterScreenState extends State<ConverterScreen> {
       final rates = data['rates'] as Map<String, dynamic>;
       final timestamp = data['timestamp'] as int;
 
-      setState(() {
-        CurrencyConverter.updateRates(rates);
-        _lastUpdateTime = DateTime.fromMillisecondsSinceEpoch(timestamp);
-        _isLoading = false;
-        _hasLoadError = false;
-      });
+      if (mounted) {
+        setState(() {
+          CurrencyConverter.updateRates(rates);
+          _lastUpdateTime = DateTime.fromMillisecondsSinceEpoch(timestamp);
+          _hasLoadError = false;
+        });
+
+        // Update all fields with new rates
+        _updateAllFieldsFromExisting();
+      }
 
       // Cancel retry timer if rates loaded successfully
       _retryTimer?.cancel();
       _retryTimer = null;
     } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _hasLoadError = true;
-      });
-
-      // Show toast notification
       if (mounted) {
+        setState(() {
+          _hasLoadError = true;
+        });
+
+        // Show toast notification
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Unable to load exchange rates. Retrying...'),
@@ -354,7 +395,8 @@ class _ConverterScreenState extends State<ConverterScreen> {
 
     if (result != null) {
       await _loadCurrencies();
-      await _loadExchangeRates();
+      // Rates are already loaded in background, just update fields
+      _updateAllFieldsFromExisting();
     }
   }
 

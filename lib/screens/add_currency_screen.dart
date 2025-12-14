@@ -58,36 +58,16 @@ class _AddCurrencyScreenState extends State<AddCurrencyScreen> {
 
   /// Add currency and return to main screen.
   Future<void> _addCurrency(String currencyCode) async {
-    // Show loading indicator
-    if (!mounted) return;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(),
-      ),
-    );
-
     try {
       // Add to preferences
       await CurrencyPreferencesService.addCurrency(currencyCode);
 
-      // Fetch rate for this currency if not already cached
-      await ExchangeRateService.getRateForCurrency(currencyCode);
-
       if (!mounted) return;
-
-      // Close loading dialog
-      Navigator.of(context).pop();
 
       // Return to converter screen with result
       Navigator.of(context).pop(currencyCode);
     } catch (e) {
       if (!mounted) return;
-
-      // Close loading dialog
-      Navigator.of(context).pop();
 
       // Show error
       ScaffoldMessenger.of(context).showSnackBar(
