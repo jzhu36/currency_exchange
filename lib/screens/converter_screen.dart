@@ -166,6 +166,26 @@ class _ConverterScreenState extends State<ConverterScreen> {
   }
 
   Future<void> _refreshRates() async {
+    // Check if data is already fresh (updated within 15 minutes)
+    if (_lastUpdateTime != null) {
+      final now = DateTime.now();
+      final difference = now.difference(_lastUpdateTime!);
+      
+      if (difference.inMinutes < 15) {
+        // Data is already up to date, show success banner
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Exchange rates are already up to date (updated ${difference.inMinutes} min ago)'),
+              duration: const Duration(seconds: 2),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+        return;
+      }
+    }
+
     setState(() {
       _isRefreshing = true;
     });
